@@ -1,0 +1,17 @@
+# Three service types to remember:
+# ClusterIP (default): Internal only (like Docker network)
+# LoadBalancer: External access (like -p port mapping)
+# NodePort: Exposes on each node's IP
+# selector: Must match Deployment's pod labels
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: myapi-service
+spec:
+  type: LoadBalancer  # Exposes externally (like -p 8080:80)
+  selector:
+    app: myapi  # Routes traffic to pods with this label
+  ports:
+  - port: 80        # External port
+    targetPort: 8080  # Container port
