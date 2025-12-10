@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+data:
+  # Key-value pairs
+  LOG_LEVEL: "Information"
+  FEATURE_FLAG_NEWUI: "true"
+  
+  # Or entire files
+  appsettings.json: |
+    {
+      "Logging": {
+        "LogLevel": {
+          "Default": "Information"
+        }
+      },
+      "AllowedHosts": "*"
+    }
