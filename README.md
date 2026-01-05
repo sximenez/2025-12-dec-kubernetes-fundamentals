@@ -670,7 +670,56 @@ Duplicate `exercise2-deployment.yaml` and amend to `exercise3-deployment.yaml` t
       key: password
 ```
 
-#### Step 3.6: Safe volume deletion
+#### Step 3.6: Job to Test Database Connection
+
+```bash
+# 1. Create test table in database
+kubectl --namespace kubernetes-fundamentals exec -it postgres-0 -- psql -U postgres -d myappdb
+CREATE TABLE connection_test (id SERIAL PRIMARY KEY, pod_name VARCHAR(255), connected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+```
+
+Deploy `exercise3-job.yaml` job to write data from pod to database:
+```yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: db-connection-test
+  namespace: kubernetes-fundamentals
+spec:
+  template:
+    spec:
+      containers:
+      - name: test
+        image: postgres:15
+        command:
+        - /bin/bash
+        - -c
+        - |
+          echo "Testing connection to database..."
+          if psql -h postgres.kubernetes-fundamentals.svc.cluster.local -U postgres -d myappdb -c "INSERT INTO connection_test (pod_name) VALUES ('test-job-$(hostname)');" ; then
+            echo "✓ Successfully wrote to database"
+            psql -h postgres.kubernetes-fundamentals.svc.cluster.local -U postgres -d myappdb -c "SELECT * FROM connection_test;"
+          else
+            echo "✗ Database connection failed"
+            exit 1
+          fi
+        env:
+        - name: PGPASSWORD
+          value: mysecretpassword
+      restartPolicy: Never
+```
+
+```terminal
+Testing connection to database...
+INSERT 0 1
+✓ Successfully wrote to database
+ id |             pod_name              |        connected_at
+----+-----------------------------------+----------------------------
+  1 | test-job-db-connection-test-f5w5m | 2026-01-05 13:59:00.118148
+(1 row)
+```
+
+#### Step 3.7: Safe Volume Deletion
 
 ```bash
 # 1. Backup data first (CRITICAL)
@@ -693,7 +742,7 @@ kubectl get pv
 # Should show no volumes, or previous volume in "Released" state
 ```
 
-##### Production deletion
+##### Production Deletion
 
 ```bash
 # 1. Scale down StatefulSet (graceful shutdown)
@@ -716,7 +765,8 @@ kubectl delete pvc postgres-storage-postgres-0
 - [X] PV created automatically (`kubectl get pv`)
 - [X] PostgreSQL pod running (`kubectl get pods`)
 - [X] Data survives pod deletion
-- [ ] Application can connect to database
+- [X] Application can connect to database
+- [X] Application writes data to database successfully
 
 ### Common Issues
 
@@ -742,7 +792,7 @@ kubectl describe pvc postgres-storage-postgres-0
 
 ---
 
-## Day 4: Scheduled Jobs
+## Exercise 4: Scheduled Jobs
 
 ### Goal
 Run a nightly database backup job at 2 AM daily.
@@ -761,14 +811,22 @@ docker run --rm migration:latest
 
 #### Step 4.1: Create CronJob for Backups
 
-Create `day4-cronjob.yaml`:
+Create test table in database using `exercise3-postgres.yaml`:
+```bash
+kubectl apply -f exercise3-postgres.yaml
+kubectl --namespace kubernetes-fundamentals exec -it postgres-0 -- psql -U postgres -d myappdb
+CREATE TABLE test (id SERIAL PRIMARY KEY, job_name VARCHAR(255), connected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+```
+
+Create `exercise4-cronjob.yaml`:
 ```yaml
 apiVersion: batch/v1
 kind: CronJob
 metadata:
   name: db-backup
+  namespace: kubernetes-fundamentals
 spec:
-  schedule: "0 2 * * *"  # Cron syntax: minute hour day month weekday
+  schedule: "*/1 * * * *"  # Cron syntax: minute hour day month weekday
   successfulJobsHistoryLimit: 3  # Keep last 3 successful jobs
   failedJobsHistoryLimit: 1      # Keep last 1 failed job
   jobTemplate:
@@ -782,121 +840,50 @@ spec:
             - /bin/bash
             - -c
             - |
-              echo "Starting backup at $(date)"
-              pg_dump -h postgres.default.svc.cluster.local -U postgres myappdb > /backup/backup-$(date +%Y%m%d-%H%M%S).sql
-              echo "Backup completed"
+              echo "Testing writing to database..."
+              if psql -h postgres.kubernetes-fundamentals.svc.cluster.local -U postgres -d myappdb -c "INSERT INTO test (job_name) VALUES ('cron-job-$(hostname)');" ; then
+                echo "✓ Successfully wrote to database"
+                psql -h postgres.kubernetes-fundamentals.svc.cluster.local -U postgres -d myappdb -c "SELECT * FROM test;"
+              else
+                echo "✗ Database connection failed"
+                exit 1
+              fi
             env:
             - name: PGPASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: db-credentials
-                  key: password
-            volumeMounts:
-            - name: backup-storage
-              mountPath: /backup
+              value: mysecretpassword
           
           restartPolicy: OnFailure  # Retry on failure
-          
-          volumes:
-          - name: backup-storage
-            persistentVolumeClaim:
-              claimName: backup-pvc
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: backup-pvc
-spec:
-  accessModes:
-  - ReadWriteOnce
-  resources:
-    requests:
-      storage: 5Gi
 ```
 
 #### Step 4.2: Deploy and Test Immediately
 
 ```bash
-# Create CronJob
-kubectl apply -f day4-cronjob.yaml
-
-# Don't wait for 2 AM - create manual job
-kubectl create job db-backup-manual --from=cronjob/db-backup
-
-# Check job status
-kubectl get jobs
-# NAME               COMPLETIONS   DURATION   AGE
-# db-backup-manual   1/1           15s        30s
+# Create CronJob with reduced schedule for testing (every minute)
+kubectl apply -f exercise4-cronjob.yaml
 
 # View logs
-kubectl logs job/db-backup-manual
-# Starting backup at Mon Dec  9 15:30:00 UTC 2024
-# Backup completed
+kubectl logs --namespace kubernetes-fundamentals db-backup-<pod_name>
 
-# Check if backup file exists
-kubectl get pods -l job-name=db-backup-manual
-kubectl exec db-backup-manual-abc123 -- ls -lh /backup/
+Testing writing to database...
+INSERT 0 1
+✓ Successfully wrote to database
+ id |             job_name              |        connected_at
+----+-----------------------------------+----------------------------
+  1 | cron-job-db-backup-29460445-8s7l2 | 2026-01-05 15:25:00.738352
+
+# Check if row exists in database
+kubectl --namespace kubernetes-fundamentals exec -it postgres-0 -- psql -U postgres -d myappdb
+myappdb=# SELECT * FROM test;
+ id |             job_name              |        connected_at
+----+-----------------------------------+----------------------------
+  1 | cron-job-db-backup-29460445-8s7l2 | 2026-01-05 15:25:00.738352
+  2 | cron-job-db-backup-29460446-ss9tc | 2026-01-05 15:26:00.768525
+  3 | cron-job-db-backup-29460447-c8ts8 | 2026-01-05 15:27:00.76739
+  4 | cron-job-db-backup-29460448-txmn4 | 2026-01-05 15:28:00.757523
+  5 | cron-job-db-backup-29460449-8hv4g | 2026-01-05 15:29:00.736292
+  6 | cron-job-db-backup-29460450-gnnx8 | 2026-01-05 15:30:00.761418
+(6 rows)
 ```
-
-#### Step 4.3: Create One-Time Migration Job
-
-Create `day4-migration-job.yaml`:
-```yaml
-apiVersion: batch/v1
-kind: Job
-metadata:
-  name: db-migration-v2
-spec:
-  template:
-    spec:
-      containers:
-      - name: migrator
-        image: postgres:15
-        command:
-        - /bin/bash
-        - -c
-        - |
-          echo "Running migration v2"
-          psql -h postgres.default.svc.cluster.local -U postgres -d myappdb <<EOF
-          CREATE TABLE IF NOT EXISTS users (
-            id SERIAL PRIMARY KEY,
-            username VARCHAR(100) NOT NULL,
-            email VARCHAR(255) NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-          );
-          INSERT INTO users (username, email) VALUES ('admin', 'admin@example.com');
-          EOF
-          echo "Migration completed"
-        env:
-        - name: PGPASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: db-credentials
-              key: password
-      
-      restartPolicy: Never  # Don't retry, fail if error
-  
-  backoffLimit: 3  # Retry up to 3 times
-```
-
-Deploy and monitor:
-```bash
-# Create job
-kubectl apply -f day4-migration-job.yaml
-
-# Watch until completion
-kubectl wait --for=condition=complete job/db-migration-v2 --timeout=300s
-
-# Or check status
-kubectl get jobs
-kubectl logs job/db-migration-v2
-
-# Verify migration
-kubectl exec -it postgres-0 -- psql -U postgres -d myappdb -c "\dt"
-# Should show 'users' table
-```
-
-#### Step 4.4: Schedule Variations
 
 Common cron schedules:
 ```yaml
@@ -917,11 +904,9 @@ schedule: "0 0 1 * *"
 ```
 
 ### Validation Checklist
-- [ ] CronJob created (`kubectl get cronjobs`)
-- [ ] Manual job completes successfully
-- [ ] Backup file created in PVC
-- [ ] Migration job runs and creates table
-- [ ] Job history shows in `kubectl get jobs`
+- [X] CronJob created (`kubectl get cronjobs`)
+- [X] Cron job completes successfully
+- [X] Rows insered in database table
 
 ### Common Issues
 
@@ -953,14 +938,14 @@ kubectl get cronjobs
 
 ---
 
-## Day 5: Production Patterns
+## Exercise 5: Production Patterns
 
 ### Goal
 Implement health checks, resource limits, and organized configuration.
 
 ### Production-Ready Deployment Template
 
-Create `day5-production-deployment.yaml`:
+Create `exercise5-production-deployment.yaml`:
 ```yaml
 apiVersion: apps/v1
 kind: Deployment
