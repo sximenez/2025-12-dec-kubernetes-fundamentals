@@ -1,0 +1,27 @@
+﻿apiVersion: batch/v1
+kind: Job
+metadata:
+  name: db-connection-test
+  namespace: kubernetes-fundamentals
+spec:
+  template:
+    spec:
+      containers:
+      - name: test
+        image: postgres:15
+        command:
+        - /bin/bash
+        - -c
+        - |
+          echo "Testing connection to database..."
+          if psql -h postgres.kubernetes-fundamentals.svc.cluster.local -U postgres -d myappdb -c "INSERT INTO connection_test (pod_name) VALUES ('test-job-$(hostname)');" ; then
+            echo "✓ Successfully wrote to database"
+            psql -h postgres.kubernetes-fundamentals.svc.cluster.local -U postgres -d myappdb -c "SELECT * FROM connection_test;"
+          else
+            echo "✗ Database connection failed"
+            exit 1
+          fi
+        env:
+        - name: PGPASSWORD
+          value: mysecretpassword
+      restartPolicy: Never
