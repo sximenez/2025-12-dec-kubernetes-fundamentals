@@ -1,0 +1,33 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: myapi
+  namespace: kubernetes-fundamentals
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: myapi
+  template:
+    metadata:
+      labels:
+        app: myapi
+    spec:
+      containers:
+      - name: api
+        image: mcr.microsoft.com/dotnet/samples:aspnetapp
+        ports:
+        - containerPort: 8080
+        
+        # Environment variables
+        env:
+        - name: DB_HOST
+          value: postgres.default.svc.cluster.local
+        - name: DB_PORT
+          value: "5432"
+        - name: DB_NAME
+          value: myappdb
+        - name: DB_USER
+          value: postgres
+        - name: DB_PASSWORD
+          value: mysecretpassword  # In production, use Secret
