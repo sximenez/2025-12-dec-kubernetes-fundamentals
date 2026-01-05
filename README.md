@@ -385,7 +385,7 @@ echo 'TXlTZWN1cmVQQHNzdzByZCE=' | base64 --decode
 
 #### Step 2.3: Update Deployment to Use Config
 
-Create `day2-deployment.yaml`:
+Create `exercise2-deployment.yaml`:
 ```yaml
 apiVersion: apps/v1
 kind: Deployment
@@ -450,14 +450,14 @@ spec:
 
 ```bash
 # Create ConfigMap
-kubectl apply -f day2-configmap.yaml
+kubectl apply -f exercise2-configmap.yaml
 
 # Create Secret (if using YAML)
-kubectl apply -f day2-secret.yaml
+kubectl apply -f exercise2-secret.yaml
 # Or use command line version from Step 2.2
 
 # Update Deployment
-kubectl apply -f day2-deployment.yaml
+kubectl apply -f exercise2-deployment.yaml
 
 # Verify environment variables in pod
 kubectl get pods  # Get pod name
@@ -546,7 +546,7 @@ You typically don't need to create this manually.
 
 #### Step 3.2: Create StatefulSet with PVC
 
-Create `day3-postgres.yaml`:
+Create `exercise3-postgres.yaml`:
 ```yaml
 apiVersion: v1
 kind: Service
@@ -610,7 +610,7 @@ spec:
 
 ```bash
 # Create StatefulSet
-kubectl apply -f day3-postgres.yaml
+kubectl apply -f exercise3-postgres.yaml
 
 # Check pod
 kubectl get pods
@@ -652,7 +652,7 @@ kubectl exec -it postgres-0 -- psql -U postgres -d myappdb -c "SELECT * FROM tes
 
 #### Step 3.5: Connect Application to Database
 
-Update `day2-deployment.yaml` to add database connection:
+Duplicate `exercise2-deployment.yaml` and amend to `exercise3-deployment.yaml` to add database connection:
 ```yaml
 # Add to containers.env section:
 - name: DB_HOST
