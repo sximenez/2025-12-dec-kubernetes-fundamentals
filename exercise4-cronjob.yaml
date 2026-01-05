@@ -1,0 +1,33 @@
+﻿apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: db-backup
+  namespace: kubernetes-fundamentals
+spec:
+  schedule: "*/1 * * * *"  # Cron syntax: minute hour day month weekday
+  successfulJobsHistoryLimit: 3  # Keep last 3 successful jobs
+  failedJobsHistoryLimit: 1      # Keep last 1 failed job
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: backup
+            image: postgres:15
+            command:
+            - /bin/bash
+            - -c
+            - |
+              echo "Testing writing to database..."
+              if psql -h postgres.kubernetes-fundamentals.svc.cluster.local -U postgres -d myappdb -c "INSERT INTO test (job_name) VALUES ('cron-job-$(hostname)');" ; then
+                echo "✓ Successfully wrote to database"
+                psql -h postgres.kubernetes-fundamentals.svc.cluster.local -U postgres -d myappdb -c "SELECT * FROM test;"
+              else
+                echo "✗ Database connection failed"
+                exit 1
+              fi
+            env:
+            - name: PGPASSWORD
+              value: mysecretpassword
+          
+          restartPolicy: OnFailure  # Retry on failure
