@@ -2,6 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: myapi
+  namespace: kubernetes-fundamentals
 spec:
   replicas: 3
   selector:
@@ -23,29 +24,31 @@ spec:
         - name: LOG_LEVEL
           valueFrom:
             configMapKeyRef:
-              name: app-config
+              name: kube-fundamentals-app-config
               key: LOG_LEVEL
         
         - name: FEATURE_FLAG_NEWUI
           valueFrom:
             configMapKeyRef:
-              name: app-config
+              name: kube-fundamentals-app-config
               key: FEATURE_FLAG_NEWUI
         
         # Environment variables from Secret
         - name: DB_PASSWORD
           valueFrom:
             secretKeyRef:
-              name: db-credentials
+              name: kube-fundamentals-db-credentials
               key: password
         
         - name: CONNECTION_STRING
           valueFrom:
             secretKeyRef:
-              name: db-credentials
+              name: kube-fundamentals-db-credentials
               key: connection-string
         
         # Mount entire ConfigMap as file
+        # A configMap is just a data store: it doesn't automatically get injected into pods
+        # To make values available, we need to mount the configMap as a volume or set env vars
         volumeMounts:
         - name: config-volume
           mountPath: /app/config
@@ -54,4 +57,4 @@ spec:
       volumes:
       - name: config-volume
         configMap:
-          name: app-config
+          name: kube-fundamentals-app-config

@@ -1,7 +1,8 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: app-config
+  name: kube-fundamentals-app-config
+  namespace: kubernetes-fundamentals
 data:
   # Key-value pairs
   LOG_LEVEL: "Information"
