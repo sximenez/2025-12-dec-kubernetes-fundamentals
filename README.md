@@ -1,16 +1,16 @@
 # Kubernetes fundamentals
 
 ## Table of Contents
-1. [Prerequisites & Setup](#prerequisites--setup)
-2. [Docker → Kubernetes Concept Map](#docker--kubernetes-concept-map)
-3. [Learning Path Overview](#learning-path-overview)
-4. [Exercise 1: First Deployment](#day-1-first-deployment)
-5. [Exercise 2: Configuration Management](#day-2-configuration-management)
-6. [Exercise 3: Persistent Storage](#day-3-persistent-storage)
-7. [Exercise 4: Scheduled Jobs](#day-4-scheduled-jobs)
-8. [Exercise 5: Production Patterns](#day-5-production-patterns)
-9. [Essential Commands Cheat Sheet](#essential-commands-cheat-sheet)
-10. [Troubleshooting Guide](#troubleshooting-guide)
+- [Prerequisites & Setup](#prerequisites--setup)
+- [Practice](#practice)
+- [Exercise 1 — First Deployment](#exercise-1-first-deployment)
+- [Exercise 2 — Configuration Management](#exercise-2-configuration-management)
+- [Exercise 3 — Persistent Storage](#exercise-3-persistent-storage)
+- [Exercise 4 — Scheduled Jobs](#exercise-4-scheduled-jobs)
+- [Exercise 5 — Production Patterns](#exercise-5-production-patterns)
+- [Essential Commands Cheat Sheet](#essential-commands-cheat-sheet)
+- [Troubleshooting Guide](#troubleshooting-guide)
+- [Next Steps & Summary](#summary)
 
 ---
 
