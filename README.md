@@ -4,11 +4,11 @@
 1. [Prerequisites & Setup](#prerequisites--setup)
 2. [Docker → Kubernetes Concept Map](#docker--kubernetes-concept-map)
 3. [Learning Path Overview](#learning-path-overview)
-4. [Day 1: First Deployment](#day-1-first-deployment)
-5. [Day 2: Configuration Management](#day-2-configuration-management)
-6. [Day 3: Persistent Storage](#day-3-persistent-storage)
-7. [Day 4: Scheduled Jobs](#day-4-scheduled-jobs)
-8. [Day 5: Production Patterns](#day-5-production-patterns)
+4. [Exercise 1: First Deployment](#day-1-first-deployment)
+5. [Exercise 2: Configuration Management](#day-2-configuration-management)
+6. [Exercise 3: Persistent Storage](#day-3-persistent-storage)
+7. [Exercise 4: Scheduled Jobs](#day-4-scheduled-jobs)
+8. [Exercise 5: Production Patterns](#day-5-production-patterns)
 9. [Essential Commands Cheat Sheet](#essential-commands-cheat-sheet)
 10. [Troubleshooting Guide](#troubleshooting-guide)
 
@@ -941,661 +941,339 @@ kubectl get cronjobs
 ## Exercise 5: Production Patterns
 
 ### Goal
-Implement health checks, resource limits, and organized configuration.
+Transform basic deployments into production-grade services by adding 5 critical patterns.
 
-### Production-Ready Deployment Template
+#### Step 5.1: Add Health Checks and Graceful Shutdown
 
-Create `exercise5-production-deployment.yaml`:
+##### Goal
+Prevent traffic to unhealthy pods and allow in-flight requests to complete during restarts.
+Four concepts: 
+
+- Health checks:
+    - Startup: Has the application started successfully?
+    - Liveness: Is the application alive?
+    - Readiness: Is the application ready to serve traffic?
+
+- Graceful shutdown: Clean termination with zero dropped requests.
+
+###### Step 5.1.1: Startup probe
+
+Runs first and delays liveness/readiness checks.
+Fails if app doesn't start within failureThreshold * periodSeconds (6 * 5s = 30s)
+(here, we simulate a slow startup).
+
+Create `exercise5-startup-probe.yaml`:
 ```yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: myapi
-  labels:
-    app: myapi
-    version: v1.2.0
+  name: myapi-slow-start
+  namespace: kubernetes-fundamentals
 spec:
-  replicas: 3
-  
-  # Rolling update strategy
-  strategy:
-    type: RollingUpdate
-    rollingUpdate:
-      maxSurge: 1        # Create 1 extra pod during update
-      maxUnavailable: 0  # Keep all pods available during update
-  
+  replicas: 1
   selector:
     matchLabels:
-      app: myapi
-  
+      app: myapi-slow-start
   template:
     metadata:
       labels:
-        app: myapi
-        version: v1.2.0
+        app: myapi-slow-start
     spec:
       containers:
       - name: api
         image: mcr.microsoft.com/dotnet/samples:aspnetapp
-        imagePullPolicy: Always  # Always pull latest image
-        
         ports:
         - name: http
           containerPort: 8080
         
-        # Resource limits (CRITICAL for production)
-        resources:
-          requests:
-            memory: "128Mi"  # Guaranteed allocation
-            cpu: "250m"      # 0.25 CPU cores
-          limits:
-            memory: "256Mi"  # Maximum allowed
-            cpu: "500m"      # 0.5 CPU cores
-        
-        # Liveness probe (restart if unhealthy)
-        livenessProbe:
-          httpGet:
-            path: /health
-            port: http
-          initialDelaySeconds: 30  # Wait 30s before first check
-          periodSeconds: 10        # Check every 10s
-          timeoutSeconds: 5        # Timeout after 5s
-          failureThreshold: 3      # Restart after 3 failures
-        
-        # Readiness probe (remove from load balancer if unhealthy)
-        readinessProbe:
-          httpGet:
-            path: /ready
-            port: http
-          initialDelaySeconds: 10
-          periodSeconds: 5
-          failureThreshold: 2
-        
-        # Startup probe (delay liveness/readiness for slow apps)
-        startupProbe:
-          httpGet:
-            path: /health
-            port: http
-          initialDelaySeconds: 0
-          periodSeconds: 5
-          failureThreshold: 30  # Allow 150s for startup (30 * 5s)
-        
-        # Environment from ConfigMap/Secret
-        envFrom:
-        - configMapRef:
-            name: app-config
-        - secretRef:
-            name: db-credentials
-        
-        # Graceful shutdown
+        # Add 20s delay before app starts responding
         lifecycle:
-          preStop:
+          postStart:
             exec:
               command:
               - /bin/sh
               - -c
-              - sleep 15  # Allow in-flight requests to complete
-      
-      # Security context
-      securityContext:
-        runAsNonRoot: true
-        runAsUser: 1000
-        fsGroup: 1000
-      
-      # Termination grace period
-      terminationGracePeriodSeconds: 30
+              - sleep 20
+        
+        startupProbe:
+          httpGet:
+            path: /
+            port: http
+          initialDelaySeconds: 0
+          periodSeconds: 5
+          failureThreshold: 6  # 30s total allowance
+        
+        livenessProbe:
+          httpGet:
+            path: /
+            port: http
+          initialDelaySeconds: 10
+          periodSeconds: 10
 ```
 
-### Namespace Organization
+```bash
+# Watch pod startup process
+kubectl get pods -n kubernetes-fundamentals -w
 
-Create `day5-namespace.yaml`:
+# Expected behavior:
+# 1. Pod shows "Running" but NOT "Ready" (0/1)
+# 2. After ~20s, startup probe succeeds
+# 3. Pod becomes "Ready" (1/1)
+# 4. Liveness/readiness probes take over
+
+# Check probe events
+kubectl describe pod myapi-slow-start-<pod-id> -n kubernetes-fundamentals | grep -A20 Events:
+
+# Expected events should all be normal/successful
+```
+
+##### Step 5.1.2: Failed startup probe
+
+```bash
+# Reduce failure threshold to trigger startup failure
+kubectl patch deployment myapi-slow-start -n kubernetes-fundamentals -p '{"spec":{"template":{"spec":{"containers":[{"name":"api","startupProbe":{"failureThreshold":2}}]}}}}'
+
+# Watch pod fail to start
+kubectl get pods -n kubernetes-fundamentals -w
+
+# Expected: Pod restarts repeatedly (CrashLoopBackOff)
+# After some attempts, the pod is terminated
+
+# Cleanup
+kubectl delete deployment myapi-slow-start -n kubernetes-fundamentals
+```
+
+###### Step 5.1.2: Liveness probe
+
+Restarts pod if it becomes unhealthy (deadlock, infinite loop, corrupted state)
+(if `failureThreshold` fails consecutive times).
+
+Create `exercise5-liveness-probe.yaml`:
 ```yaml
+# Deploy test pod with controllable health endpoint
 apiVersion: v1
-kind: Namespace
+kind: Pod
 metadata:
-  name: production
-  labels:
-    environment: production
----
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: staging
-  labels:
-    environment: staging
-```
-
-Deploy to specific namespace:
-```bash
-kubectl apply -f day5-namespace.yaml
-
-# Deploy to production namespace
-kubectl apply -f day5-production-deployment.yaml -n production
-
-# Set default namespace
-kubectl config set-context --current --namespace=production
-
-# Verify
-kubectl get pods  # Now shows production namespace by default
-```
-
-### Resource Quotas (Prevent Resource Exhaustion)
-
-Create `day5-quota.yaml`:
-```yaml
-apiVersion: v1
-kind: ResourceQuota
-metadata:
-  name: production-quota
-  namespace: production
+  name: liveness-test
+  namespace: kubernetes-fundamentals
 spec:
-  hard:
-    requests.cpu: "10"       # Max 10 CPU cores requested
-    requests.memory: 20Gi    # Max 20GB memory requested
-    limits.cpu: "20"         # Max 20 CPU cores limit
-    limits.memory: 40Gi      # Max 40GB memory limit
-    persistentvolumeclaims: "10"  # Max 10 PVCs
-    services.loadbalancers: "3"   # Max 3 LoadBalancers
+  containers:
+  - name: api
+    image: nginx:alpine
+    ports:
+    - containerPort: 80
+    
+    livenessProbe:
+      httpGet:
+        path: /health
+        port: 80
+      initialDelaySeconds: 10
+      periodSeconds: 10
+      failureThreshold: 3  # Restart after 30s (3 * 10s)
+    
+    # Create health endpoint
+    lifecycle:
+      postStart:
+        exec:
+          command:
+          - /bin/sh
+          - -c
+          - echo "OK" > /usr/share/nginx/html/health
+``
+
+```bash
+# Verify pod is healthy
+kubectl get pod liveness-test -n kubernetes-fundamentals
+
+# NAME            READY   STATUS    RESTARTS   AGE
+# liveness-test   1/1     Running   0          11s
+
+# Simulate application deadlock by deleting health endpoint
+kubectl exec liveness-test -n kubernetes-fundamentals -- rm /usr/share/nginx/html/health
+
+# Watch liveness probe fail and pod restart
+kubectl logs -f liveness-test -n kubernetes-fundamentals
+
+# Expected sequence:
+# 10.1.0.1 - - [16/Jan/2026:08:58:21 +0000] "GET /health HTTP/1.1" 200 3 "-" "kube-probe/1.34" "-"
+# 10.1.0.1 - - [16/Jan/2026:08:58:31 +0000] "GET /health HTTP/1.1" 404 153 "-" "kube-probe/1.34" "-"
+#2026/01/16 08:58:31 [error] 35#35: *9 open() "/usr/share/nginx/html/health" failed (2: No such file or directory), client: 10.1.0.1, server: localhost, request: "GET /health HTTP/1.1", host: "10.1.0.205:80"
+#10.1.0.1 - - [16/Jan/2026:08:58:41 +0000] "GET /health HTTP/1.1" 404 153 "-" "kube-probe/1.34" "-"
+#2026/01/16 08:58:41 [error] 35#35: *10 open() "/usr/share/nginx/html/health" failed (2: No such file or directory), client: 10.1.0.1, server: localhost, request: "GET /health HTTP/1.1", host: "10.1.0.205:80"
+#10.1.0.1 - - [16/Jan/2026:08:58:51 +0000] "GET /health HTTP/1.1" 404 153 "-" "kube-probe/1.34" "-"
+#2026/01/16 08:58:51 [error] 35#35: *11 open() "/usr/share/nginx/html/health" failed (2: No such file or directory), client: 10.1.0.1, server: localhost, request: "GET /health HTTP/1.1", host: "10.1.0.205:80"
+#2026/01/16 08:58:51 [notice] 1#1: signal 3 (SIGQUIT) received, shutting down
+#2026/01/16 08:58:51 [notice] 35#35: gracefully shutting down
+
+# Verify restart count increased
+kubectl get pod liveness-test -n kubernetes-fundamentals
+# NAME            READY   STATUS    RESTARTS   AGE
+# liveness-test   1/1     Running   1          2m
+
+# Cleanup
+kubectl delete pod liveness-test -n kubernetes-fundamentals
 ```
 
-### Horizontal Pod Autoscaler
+###### Step 5.1.3: Readiness probe
 
-Create `day5-hpa.yaml`:
+Readiness probe removes pod from Service endpoints if unhealthy.
+**NOT restarted like liveness probe.**
+
+Create `exercise5-readiness-probe.yaml`:
 ```yaml
-apiVersion: autoscaling/v2
-kind: HorizontalPodAutoscaler
+apiVersion: apps/v1
+kind: Deployment
 metadata:
-  name: myapi-hpa
-  namespace: production
+  name: readiness-test
+  namespace: kubernetes-fundamentals
 spec:
-  scaleTargetRef:
-    apiVersion: apps/v1
-    kind: Deployment
-    name: myapi
-  minReplicas: 3
-  maxReplicas: 10
-  metrics:
-  - type: Resource
-    resource:
-      name: cpu
-      target:
-        type: Utilization
-        averageUtilization: 70  # Scale up if >70% CPU
-  - type: Resource
-    resource:
-      name: memory
-      target:
-        type: Utilization
-        averageUtilization: 80  # Scale up if >80% memory
-```
-
-Enable metrics server (required for HPA):
-```bash
-# Minikube
-minikube addons enable metrics-server
-
-# Docker Desktop
-kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
-
-# Verify
-kubectl top nodes
-kubectl top pods
-```
-
-### Organized Directory Structure
-
-```
-/kubernetes
-  /base
-    deployment.yaml
-    service.yaml
-    configmap.yaml
-  /overlays
-    /dev
-      kustomization.yaml
-      dev-config.yaml
-    /staging
-      kustomization.yaml
-      staging-config.yaml
-    /production
-      kustomization.yaml
-      production-config.yaml
-      hpa.yaml
-      quota.yaml
-```
-
-Example `kustomization.yaml`:
-```yaml
-apiVersion: kustomize.config.k8s.io/v1beta1
-kind: Kustomization
-
-namespace: production
-
-resources:
-- ../../base
-- hpa.yaml
-- quota.yaml
-
-replicas:
-- name: myapi
-  count: 5
-
-images:
-- name: myapp
-  newTag: v1.2.0
-```
-
-Deploy with Kustomize:
-```bash
-kubectl apply -k kubernetes/overlays/production
-```
-
-### Validation Checklist
-- [ ] Health checks responding (`kubectl describe pod`)
-- [ ] Resource limits enforced
-- [ ] HPA scaling based on load (`kubectl get hpa`)
-- [ ] Namespace isolation working
-- [ ] Graceful shutdown on pod termination
-
-### Common Issues
-
-**Issue**: Liveness probe failing, pod restarting constantly  
-**Solution**: Increase `initialDelaySeconds` or `failureThreshold`
-
-**Issue**: HPA not scaling  
-**Solution**: Check metrics-server is running
-```bash
-kubectl top pods
-# If error, metrics-server not installed
-```
-
-**Issue**: Cannot exceed resource quota  
-**Solution**: Check quota usage
-```bash
-kubectl describe quota production-quota -n production
-```
-
-### Key Takeaways
-- **Liveness probe**: Restart unhealthy pods
-- **Readiness probe**: Remove from Service until ready
-- **Resource limits**: Prevent one app consuming all resources
-- **HPA**: Auto-scale based on CPU/memory
-- **Namespaces**: Isolate environments (dev/staging/prod)
-
----
-
-## Essential Commands Cheat Sheet
-
-### Cluster Management
-```bash
-# Check cluster status
-kubectl cluster-info
-kubectl get nodes
-
-# Switch context (cluster)
-kubectl config get-contexts
-kubectl config use-context docker-desktop
-```
-
-### Resource Management
-```bash
-# Create/Update
-kubectl apply -f file.yaml
-kubectl apply -f directory/
-kubectl apply -k overlays/production  # Kustomize
-
-# Delete
-kubectl delete -f file.yaml
-kubectl delete deployment myapi
-kubectl delete pod myapi-abc123
-kubectl delete all --all  # Delete everything in namespace
-
-# Get resources
-kubectl get pods
-kubectl get deployments
-kubectl get services
-kubectl get all  # All resources
-
-# Watch changes
-kubectl get pods --watch
-```
-
-### Inspection
-```bash
-# Describe (detailed info + events)
-kubectl describe pod myapi-abc123
-kubectl describe deployment myapi
-kubectl describe node minikube
-
-# Logs
-kubectl logs myapi-abc123
-kubectl logs -f myapi-abc123  # Follow (stream)
-kubectl logs myapi-abc123 --previous  # Previous crashed container
-kubectl logs -l app=myapi  # All pods with label
-
-# Execute commands in pod
-kubectl exec myapi-abc123 -- ls /app
-kubectl exec -it myapi-abc123 -- /bin/bash
-```
-
-### Debugging
-```bash
-# Port forward (local testing)
-kubectl port-forward pod/myapi-abc123 8080:80
-kubectl port-forward service/myapi-service 8080:80
-
-# Copy files
-kubectl cp myapi-abc123:/app/logs/app.log ./app.log
-kubectl cp ./config.json myapi-abc123:/app/config.json
-
-# Events
-kubectl get events --sort-by=.metadata.creationTimestamp
-
-# Resource usage
-kubectl top nodes
-kubectl top pods
-```
-
-### Scaling & Updates
-```bash
-# Scale
-kubectl scale deployment myapi --replicas=5
-
-# Rolling update
-kubectl set image deployment/myapi api=myapp:v2
-kubectl rollout status deployment/myapi
-kubectl rollout history deployment/myapi
-kubectl rollout undo deployment/myapi
-
-# Restart
-kubectl rollout restart deployment/myapi
-```
-
-### Configuration
-```bash
-# ConfigMap
-kubectl create configmap app-config --from-file=config.json
-kubectl get configmap app-config -o yaml
-
-# Secret
-kubectl create secret generic db-creds --from-literal=password=secret
-kubectl get secret db-creds -o yaml
-```
-
-### Namespace Management
-```bash
-# List namespaces
-kubectl get namespaces
-
-# Create namespace
-kubectl create namespace dev
-
-# Set default namespace
-kubectl config set-context --current --namespace=dev
-
-# Resource in specific namespace
-kubectl get pods -n production
-kubectl get pods --all-namespaces
-```
-
-### Quick Debugging Commands
-```bash
-# Why isn't my pod starting?
-kubectl describe pod <pod-name>
-# Look at Events section
-
-# Why can't I access my service?
-kubectl get endpoints myapi-service
-# Should match pod IPs
-
-# Is my config correct?
-kubectl get configmap app-config -o yaml
-kubectl get secret db-creds -o jsonpath='{.data.password}' | base64 --decode
-
-# What's consuming resources?
-kubectl top nodes
-kubectl top pods --all-namespaces --sort-by=memory
-```
-
----
-
-## Troubleshooting Guide
-
-### Pod Issues
-
-#### Pod Stuck in `Pending`
-**Symptoms**: `kubectl get pods` shows `Pending` status
-
-**Diagnosis**:
-```bash
-kubectl describe pod <pod-name>
-```
-
-**Common Causes**:
-1. **Insufficient resources**
-   ```
-   Events: 0/1 nodes are available: 1 Insufficient cpu
-   ```
-   **Solution**: Reduce resource requests or add nodes
-
-2. **PVC not bound**
-   ```
-   Events: pod has unbound immediate PersistentVolumeClaims
-   ```
-   **Solution**: Check PVC status
-   ```bash
-   kubectl get pvc
-   kubectl describe pvc <pvc-name>
-   ```
-
-3. **ImagePullBackOff**
-   ```
-   Events: Failed to pull image "myapp:latest": image not found
-   ```
-   **Solution**: Verify image exists, check image name/tag
-
-#### Pod CrashLoopBackOff
-**Symptoms**: Pod restarts repeatedly
-
-**Diagnosis**:
-```bash
-kubectl logs <pod-name>
-kubectl logs <pod-name> --previous  # Logs from crashed container
-kubectl describe pod <pod-name>
-```
-
-**Common Causes**:
-1. **Application error**: Check logs for exceptions
-2. **Liveness probe failing**: Increase `initialDelaySeconds`
-3. **Missing configuration**: Verify ConfigMap/Secret exists
-
-#### Pod Running but Not Ready
-**Symptoms**: `READY` shows `0/1`
-
-**Diagnosis**:
-```bash
-kubectl describe pod <pod-name>
-# Check Readiness probe section
-```
-
-**Solution**: Readiness probe failing
-- Check `/ready` endpoint exists
-- Increase `initialDelaySeconds`
-- Verify application starts correctly
-
-### Service Issues
-
-#### Cannot Access Service Externally
-**Symptoms**: `curl http://localhost` times out
-
-**Diagnosis**:
-```bash
-kubectl get service myapi-service
-# Check EXTERNAL-IP column
-```
-
-**Solutions**:
-1. **LoadBalancer pending (Minikube)**:
-   ```bash
-   minikube service myapi-service --url
-   ```
-
-2. **LoadBalancer pending (Kind)**:
-   ```bash
-   kubectl port-forward service/myapi-service 8080:80
-   curl http://localhost:8080
-   ```
-
-3. **Wrong Service type**:
-   Change `type: ClusterIP` to `type: LoadBalancer`
-
-#### Service Exists but No Traffic Reaches Pods
-**Diagnosis**:
-```bash
-kubectl get endpoints myapi-service
-# Should show pod IPs
-```
-
-**Solution**: Selector mismatch
-```bash
-# Check Service selector
-kubectl get service myapi-service -o yaml | grep -A5 selector
-
-# Check Pod labels
-kubectl get pods --show-labels
-
-# Selectors must match pod labels exactly
-```
-
-### Configuration Issues
-
-#### ConfigMap/Secret Changes Not Reflected
-**Symptoms**: Updated ConfigMap but pods still use old values
-
-**Solution**: Restart pods
-```bash
-kubectl rollout restart deployment myapi
-```
-
-**Better Solution**: Use ConfigMap hash in annotations (auto-restart on change)
-```yaml
-spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: readiness-test
   template:
     metadata:
-      annotations:
-        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
-```
-
-#### Secret Not Found Error
-**Diagnosis**:
-```bash
-kubectl get secrets
-kubectl describe pod <pod-name>
-```
-
-**Solution**: Create secret first
-```bash
-kubectl create secret generic db-creds --from-literal=password=secret
-```
-
-### Performance Issues
-
-#### Pods Using Too Much Memory
-**Diagnosis**:
-```bash
-kubectl top pods
-kubectl describe pod <pod-name> | grep -A5 Limits
-```
-
-**Solution**: Set memory limits
-```yaml
-resources:
-  limits:
-    memory: "512Mi"
-```
-
-#### Application Slow/Unresponsive
-**Diagnosis**:
-```bash
-kubectl top pods
-kubectl top nodes
-kubectl describe node <node-name>
-```
-
-**Solution**: Increase CPU requests or scale replicas
-```bash
-kubectl scale deployment myapi --replicas=5
-```
-
-### Storage Issues
-
-#### PVC Stuck in Pending
-**Diagnosis**:
-```bash
-kubectl describe pvc <pvc-name>
-```
-
-**Common Causes**:
-1. **No StorageClass available**:
-   ```bash
-   kubectl get storageclass
-   ```
-   **Solution**: Install default storage class (Minikube: `minikube addons enable default-storageclass`)
-
-2. **Insufficient storage**:
-   **Solution**: Reduce storage request or add storage
-
-#### Data Not Persisting
-**Diagnosis**:
-```bash
-kubectl get pvc
-kubectl get pv
-```
-
-**Solution**: Verify PVC is bound and mounted correctly
-```bash
-kubectl describe pod <pod-name> | grep -A10 Mounts
-```
-
-### Common Error Messages
-
-| Error | Meaning | Solution |
-|---|---|---|
-| `ImagePullBackOff` | Cannot pull container image | Check image name/tag, verify registry access |
-| `CrashLoopBackOff` | Container keeps crashing | Check logs: `kubectl logs <pod>` |
-| `CreateContainerConfigError` | Invalid container config | Check ConfigMap/Secret references |
-| `Insufficient cpu/memory` | Not enough resources | Reduce requests or add nodes |
-| `Pending` | Waiting for scheduling | Check resources, PVC, node affinity |
-| `ErrImagePull` | Image pull failed | Verify image exists and is accessible |
-| `OOMKilled` | Out of memory | Increase memory limits |
-
-### Getting Help
-
-```bash
-# Explain resource
-kubectl explain pod
-kubectl explain pod.spec.containers
-
-# API reference
-kubectl api-resources
-kubectl api-versions
-
-# Verbose output
-kubectl get pods -v=8  # Debug level
-```
-
+      labels:
+        app: readiness-test
+    spec:
+      containers:
+      - name: api
+        image: nginx:alpine
+        ports:
+        - containerPort: 80
+        
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          failureThreshold: 2  # Remove from Service after 10s (2 * 5s)
+        
+        lifecycle:
+          postStart:
+            exec:
+              command:
+              - /bin/sh
+              - -c
+              - echo "READY" > /usr/share/nginx/html/ready
 ---
+apiVersion: v1
+kind: Service
+metadata:
+  name: readiness-test-service
+  namespace: kubernetes-fundamentals
+spec:
+  selector:
+    app: readiness-test
+  ports:
+  - port: 80
+    targetPort: 80
+```
 
-## Next Steps
+```bash
+# Check Service endpoints (should show 2 pod IPs)
+kubectl get endpoints readiness-test-service -n kubernetes-fundamentals
+# NAME                     ENDPOINTS                     AGE
+# readiness-test-service   10.1.0.206:80,10.1.0.207:80   34s
 
-### Week 2: Advanced Topics
+# Get one pod name
+POD_NAME=$(kubectl get pods -n kubernetes-fundamentals -l app=readiness-test -o jsonpath='{.items[0].metadata.name}')
+
+# Simulate pod becoming unavailable (delete ready endpoint)
+kubectl exec $POD_NAME -n kubernetes-fundamentals -- rm /usr/share/nginx/html/ready
+
+# Watch pod status (stays Running, but becomes NOT Ready)
+kubectl get pods -n kubernetes-fundamentals -l app=readiness-test -w
+
+# Expected:
+# readiness-test-xxx   0/1   Running   0   2m
+# readiness-test-xxx   1/1   Running   0   2m
+
+# Check Service endpoints (should show only 1 pod now)
+kubectl get endpoints readiness-test-service -n kubernetes-fundamentals
+# NAME                     ENDPOINTS
+# readiness-test-service   10.1.0.6:80  (only healthy pod)
+
+# Verify traffic only goes to healthy pod
+kubectl run -it --rm curl-test --image=curlimages/curl --restart=Never -n kubernetes-fundamentals -- sh -c "for i in \$(seq 1 10); do curl -s http://readiness-test-service && echo; done"
+
+# All 10 requests should succeed (routed only to healthy pod)
+
+# Restore pod to healthy state
+kubectl exec $POD_NAME -n kubernetes-fundamentals -- sh -c 'echo "READY" > /usr/share/nginx/html/ready'
+
+# Watch pod become Ready again
+kubectl get pods -n kubernetes-fundamentals -l app=readiness-test -w
+
+# Check endpoints (should show 2 pods again)
+kubectl get endpoints readiness-test-service -n kubernetes-fundamentals
+
+# Check probe logs
+kubectl logs -f <pod-id> -n kubernetes-fundamentals
+
+# Cleanup
+kubectl delete -f exercise5-readiness-probe.yaml
+```
+
+###### Step 5.1.4: Graceful shutdown
+
+Allow in-flight requests to complete before terminating pod.
+
+Create `exercise5-graceful-shutdown.yaml`:
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: graceful-simple
+  namespace: kubernetes-fundamentals
+spec:
+  containers:
+  - name: app
+    image: busybox
+    command:
+    - /bin/sh
+    - -c
+    - |
+      echo "Application started"
+      trap "echo 'Received SIGTERM, shutting down gracefully...'; sleep 5; echo 'Shutdown complete'" TERM
+      while true; do sleep 1; done
+    
+    lifecycle:
+      preStop:
+        exec:
+          command:
+          - /bin/sh
+          - -c
+          - |
+            echo "PreStop hook triggered - waiting 10s for connection draining..."; sleep 10; echo "PreStop complete"
+  
+  terminationGracePeriodSeconds: 20
+```
+
+```bash
+# View logs in real-time
+kubectl logs graceful-simple -n kubernetes-fundamentals
+
+# Delete pod and observe shutdown sequence
+kubectl delete pod graceful-simple -n kubernetes-fundamentals
+
+# Expected log output:
+# Application started
+# Received SIGTERM, shutting down gracefully...
+# Shutdown complete
+```
+
+## Next Steps for Future Practice
+
+### Advanced Topics
 1. **Ingress Controllers**: HTTP(S) routing (replace multiple LoadBalancers)
 2. **Helm**: Package manager (templated YAML, reusable charts)
 3. **Init Containers**: Pre-start tasks (wait for dependencies, run migrations)
 4. **DaemonSets**: Run on every node (logging agents, monitoring)
 5. **Network Policies**: Firewall rules between pods
 
-### Week 3: Production Readiness
+### Production Readiness
 1. **Monitoring**: Prometheus + Grafana
 2. **Logging**: EFK stack (Elasticsearch, Fluentd, Kibana)
 3. **CI/CD Integration**: GitHub Actions, Azure DevOps
@@ -1607,20 +1285,7 @@ kubectl get pods -v=8  # Debug level
 - **Amazon EKS**: Managed Kubernetes on AWS
 - **Google GKE**: Managed Kubernetes on Google Cloud
 
-Local cluster → Cloud cluster is straightforward:
-```bash
-# Update image registry
-image: myregistry.azurecr.io/myapp:v1
-
-# Deploy same YAML to cloud cluster
-kubectl apply -f deployment.yaml
-```
-
-### Recommended Resources
-- **Official Docs**: https://kubernetes.io/docs/
-- **Interactive Tutorial**: https://kubernetes.io/docs/tutorials/kubernetes-basics/
-- **kubectl Cheat Sheet**: https://kubernetes.io/docs/reference/kubectl/cheatsheet/
-- **Kubernetes Patterns**: https://k8spatterns.io/
+### Kubernetes patterns
 
 ---
 
@@ -1633,17 +1298,7 @@ kubectl apply -f deployment.yaml
 4. **StatefulSet**: Manages stateful applications (databases)
 5. **PersistentVolume**: Durable storage
 6. **Job/CronJob**: One-time and scheduled tasks
-7. **Namespace**: Environment isolation
-
-### Docker → Kubernetes Migration Checklist
-- [ ] Convert `docker-compose.yml` to Deployment + Service YAMLs
-- [ ] Move environment variables to ConfigMap/Secret
-- [ ] Add resource limits (requests/limits)
-- [ ] Implement health checks (liveness/readiness probes)
-- [ ] Configure persistent storage for databases
-- [ ] Set up namespaces for environments (dev/staging/prod)
-- [ ] Add horizontal pod autoscaling
-- [ ] Configure ingress for HTTP(S) routing (optional)
+7. **Probes**: Health checks for reliability
 
 ### Production Readiness Checklist
 - [ ] Resource limits set on all containers
@@ -1656,58 +1311,3 @@ kubectl apply -f deployment.yaml
 - [ ] Graceful shutdown handling
 - [ ] Logging aggregation set up
 - [ ] Monitoring and alerting configured
-
-You now have the foundation to deploy production-grade containerized applications on Kubernetes!
-
----
-
-## Docker → Kubernetes Concept Map
-
-### Core Concepts Translation
-
-| **Docker Concept** | **Kubernetes Equivalent** | **Key Difference** |
-|---|---|---|
-| `docker run` | `kubectl apply -f deployment.yaml` | Declarative (desired state) vs imperative (one-time command) |
-| Container | **Pod** | Pod = 1+ containers sharing network/storage |
-| `docker-compose.yml` | **Deployment YAML** | Kubernetes maintains state automatically |
-| `docker-compose up --scale api=3` | `replicas: 3` in Deployment | Built-in load balancing + health checks |
-| Port mapping `-p 8080:80` | **Service** (type: LoadBalancer) | Abstracted networking with DNS |
-| Volume `-v /data:/var/lib/data` | **PersistentVolumeClaim** | Storage abstracted from infrastructure |
-| `docker network` | **Service** (ClusterIP) | Automatic DNS: `my-service.default.svc.cluster.local` |
-| `restart: always` | **Deployment** with restartPolicy | Self-healing, auto-restarts crashed pods |
-| `docker exec -it` | `kubectl exec -it pod-name -- bash` | Same concept, different CLI |
-| `docker logs -f` | `kubectl logs -f pod-name` | Centralized logging |
-
-### Example: docker-compose.yml → Kubernetes
-
-**Docker Compose**:
-```yaml
-version: '3'
-services:
-  api:
-    image: myapp:latest
-    ports:
-      - "8080:80"
-    environment:
-      - DB_HOST=db
-      - DB_PASSWORD=secret
-    restart: always
-    deploy:
-      replicas: 3
-  
-  db:
-    image: postgres:15
-    volumes:
-      - dbdata:/var/lib/postgresql/data
-    environment:
-      - POSTGRES_PASSWORD=secret
-
-volumes:
-  dbdata:
-```
-
-**Kubernetes Equivalent** (we'll build this step-by-step):
-- `api` service → **Deployment** + **Service**
-- `db` service → **StatefulSet** + **Service** + **PersistentVolumeClaim**
-- `environment` → **ConfigMap** + **Secret**
-- `deploy.replicas` → `spec.replicas`

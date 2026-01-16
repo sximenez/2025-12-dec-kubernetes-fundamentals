@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: readiness-test
+  namespace: kubernetes-fundamentals
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: readiness-test
+  template:
+    metadata:
+      labels:
+        app: readiness-test
+    spec:
+      containers:
+      - name: api
+        image: nginx:alpine
+        ports:
+        - containerPort: 80
+        
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          failureThreshold: 2  # Remove from Service after 10s (2 * 5s)
+        
+        lifecycle:
+          postStart:
+            exec:
+              command:
+              - /bin/sh
+              - -c
+              - echo "READY" > /usr/share/nginx/html/ready
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: readiness-test-service
+  namespace: kubernetes-fundamentals
+spec:
+  selector:
+    app: readiness-test
+  ports:
+  - port: 80
+    targetPort: 80

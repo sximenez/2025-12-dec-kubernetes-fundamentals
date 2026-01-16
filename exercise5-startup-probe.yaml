@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: myapi-slow-start
+  namespace: kubernetes-fundamentals
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: myapi-slow-start
+  template:
+    metadata:
+      labels:
+        app: myapi-slow-start
+    spec:
+      containers:
+      - name: api
+        image: mcr.microsoft.com/dotnet/samples:aspnetapp
+        ports:
+        - name: http
+          containerPort: 8080
+        
+        # Add 20s delay before app starts responding
+        lifecycle:
+          postStart:
+            exec:
+              command:
+              - /bin/sh
+              - -c
+              - sleep 20
+        
+        startupProbe:
+          httpGet:
+            path: /
+            port: http
+          initialDelaySeconds: 0
+          periodSeconds: 5
+          failureThreshold: 6  # 30s total allowance
+        
+        livenessProbe:
+          httpGet:
+            path: /
+            port: http
+          initialDelaySeconds: 10
+          periodSeconds: 10

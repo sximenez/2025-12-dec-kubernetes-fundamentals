@@ -1,0 +1,28 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: liveness-test
+  namespace: kubernetes-fundamentals
+spec:
+  containers:
+  - name: api
+    image: nginx:alpine
+    ports:
+    - containerPort: 80
+    
+    livenessProbe:
+      httpGet:
+        path: /health
+        port: 80
+      initialDelaySeconds: 10
+      periodSeconds: 10
+      failureThreshold: 3  # Restart after 30s (3 * 10s)
+    
+    # Create health endpoint
+    lifecycle:
+      postStart:
+        exec:
+          command:
+          - /bin/sh
+          - -c
+          - echo "OK" > /usr/share/nginx/html/health

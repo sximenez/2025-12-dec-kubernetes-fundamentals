@@ -1,0 +1,27 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: graceful-simple
+  namespace: kubernetes-fundamentals
+spec:
+  containers:
+  - name: app
+    image: busybox
+    command:
+    - /bin/sh
+    - -c
+    - |
+      echo "Application started"
+      trap "echo 'Received SIGTERM, shutting down gracefully...'; sleep 5; echo 'Shutdown complete'" TERM
+      while true; do sleep 1; done
+    
+    lifecycle:
+      preStop:
+        exec:
+          command:
+          - /bin/sh
+          - -c
+          - |
+            echo "PreStop hook triggered - waiting 10s for connection draining..."; sleep 10; echo "PreStop complete"
+  
+  terminationGracePeriodSeconds: 20
