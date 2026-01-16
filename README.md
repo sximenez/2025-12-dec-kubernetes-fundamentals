@@ -6,7 +6,7 @@
 - [Exercise 2 — Configuration Management](#exercise-2-configuration-management)
 - [Exercise 3 — Persistent Storage](#exercise-3-persistent-storage)
 - [Exercise 4 — Scheduled Jobs](#exercise-4-scheduled-jobs)
-- [Exercise 5 — Production Patterns](#exercise-5-production-patterns)
+- [Exercise 5 — Reliability patterns](#exercise-5-reliability-patterns)
 - [Next Steps & Summary](#next-steps-for-future-practice)
 
 ---
@@ -935,10 +935,10 @@ kubectl get cronjobs
 
 ---
 
-## Exercise 5: Production Patterns
+## Exercise 5: Reliability Patterns
 
 ### Goal
-Transform basic deployments into production-grade services by adding 5 critical patterns.
+Transform basic deployments into production-grade services by adding 4 critical reliability patterns.
 
 #### Step 5.1: Add Health Checks and Graceful Shutdown
 
