@@ -2,15 +2,12 @@
 
 ## Table of Contents
 - [Prerequisites & Setup](#prerequisites--setup)
-- [Practice](#practice)
 - [Exercise 1 — First Deployment](#exercise-1-first-deployment)
 - [Exercise 2 — Configuration Management](#exercise-2-configuration-management)
 - [Exercise 3 — Persistent Storage](#exercise-3-persistent-storage)
 - [Exercise 4 — Scheduled Jobs](#exercise-4-scheduled-jobs)
 - [Exercise 5 — Production Patterns](#exercise-5-production-patterns)
-- [Essential Commands Cheat Sheet](#essential-commands-cheat-sheet)
-- [Troubleshooting Guide](#troubleshooting-guide)
-- [Next Steps & Summary](#summary)
+- [Next Steps & Summary](#next-steps-for-future-practice)
 
 ---
 
